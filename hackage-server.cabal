@@ -11,10 +11,12 @@ description:  The new implementation of the Hackage web server, based on the
 author:       Duncan Coutts <duncan@community.haskell.org>,
               David Himmelstrup <lemmih@gmail.com>,
               Ross Paterson <ross@soi.city.ac.uk>,
-              Matthew Gruen <wikigracenotes@gmail.com>
+              Matthew Gruen <wikigracenotes@gmail.com>,
+              Nikita Karetnikov <nikita@karetnikov.org>
 maintainer:   Duncan Coutts <duncan@community.haskell.org>,
               Matthew Gruen <wikigracenotes@gmail.com>
-copyright:    2008-2013 Duncan Coutts,
+copyright:    2014 Nikita Karetnikov,
+              2008-2013 Duncan Coutts,
               2012-2013 Edsko de Vries,
               2013 Google Inc.,
               2010-2011 Matthew Gruen,
