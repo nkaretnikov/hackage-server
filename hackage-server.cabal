@@ -80,6 +80,10 @@ flag test-create-user
   default: False
   manual: True
 
+flag test-openpgp
+  default: False
+  manual: True
+
 executable hackage-server
   if ! flag(build-hackage-server)
     buildable: False
@@ -432,3 +436,47 @@ Test-Suite CreateUserTest
                     xml,
                     random
 
+executable OpenPGPTest
+  if ! flag(test-openpgp)
+    buildable: False
+  main-is:          OpenPGPTest.hs
+  default-language: Haskell2010
+  build-depends:    acid-state,
+                    aeson,
+                    array,
+                    async,
+                    base,
+                    base64-bytestring,
+                    blaze-builder,
+                    bytestring,
+                    Cabal,
+                    cereal,
+                    containers,
+                    crypto-api,
+                    csv,
+                    deepseq,
+                    directory,
+                    filepath,
+                    happstack-server,
+                    HStringTemplate,
+                    HUnit >=1.2 && <1.3,
+                    mtl,
+                    network,
+                    old-locale,
+                    openpgp-asciiarmor,
+                    parsec,
+                    pretty,
+                    pureMD5,
+                    QuickCheck,
+                    random,
+                    rss,
+                    safecopy,
+                    stm,
+                    tar,
+                    text,
+                    time,
+                    unix,
+                    unordered-containers,
+                    vector,
+                    xhtml,
+                    zlib

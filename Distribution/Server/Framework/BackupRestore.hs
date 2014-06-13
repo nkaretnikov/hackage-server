@@ -20,7 +20,7 @@ module Distribution.Server.Framework.BackupRestore (
     RestoreBackup(..),
     restoreBackupUnimplemented,
     concatM,
-    Restore,
+    Restore(..),
     restoreAddBlob,
     restoreGetBlob,
 

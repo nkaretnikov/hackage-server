@@ -4,7 +4,11 @@ module Distribution.Server.Features.UserDetails (
     UserDetailsFeature(..),
 
     AccountDetails(..),
-    AccountKind(..)
+    AccountKind(..),
+
+    UserDetailsTable(..),
+    importUserDetails,
+    userDetailsToCSV
   ) where
 
 import Distribution.Server.Framework
