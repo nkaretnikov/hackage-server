@@ -33,6 +33,10 @@ import Distribution.Text (display)
 import Data.Version
 import Text.CSV (CSV, Record)
 
+import qualified Data.ByteString.Char8 as BS
+import qualified Codec.Encryption.OpenPGP.ASCIIArmor as OpenPGPASCII
+import Codec.Encryption.OpenPGP.ASCIIArmor.Types
+  (Armor(Armor), ArmorType(ArmorPublicKeyBlock))
 
 -- | A feature to store extra information about users like email addresses.
 --
@@ -55,7 +59,8 @@ data AccountDetails = AccountDetails {
                         accountName         :: !Text,
                         accountContactEmail :: !Text,
                         accountKind         :: Maybe AccountKind,
-                        accountAdminNotes   :: !Text
+                        accountAdminNotes   :: !Text,
+                        accountPublicKey    :: !(Maybe BS.ByteString)
                       }
   deriving (Eq, Show, Typeable)
 
@@ -67,7 +72,7 @@ newtype UserDetailsTable = UserDetailsTable (IntMap AccountDetails)
   deriving (Eq, Show, Typeable)
 
 emptyAccountDetails :: AccountDetails
-emptyAccountDetails   = AccountDetails T.empty T.empty Nothing T.empty
+emptyAccountDetails   = AccountDetails T.empty T.empty Nothing T.empty Nothing
 emptyUserDetailsTable :: UserDetailsTable
 emptyUserDetailsTable = UserDetailsTable IntMap.empty
 
@@ -76,7 +81,7 @@ $(deriveSafeCopy 0 'base ''AccountKind)
 $(deriveSafeCopy 0 'base ''UserDetailsTable)
 
 instance MemSize AccountDetails where
-    memSize (AccountDetails a b c d) = memSize4 a b c d
+    memSize (AccountDetails a b c d e) = memSize5 a b c d e
 
 instance MemSize AccountKind where
     memSize _ = memSize0
@@ -184,14 +189,16 @@ importUserDetails :: CSV -> UserDetailsTable -> Restore UserDetailsTable
 importUserDetails = concatM . map fromRecord . drop 2
   where
     fromRecord :: Record -> UserDetailsTable -> Restore UserDetailsTable
-    fromRecord [idStr, nameStr, emailStr, kindStr, notesStr] (UserDetailsTable tbl) = do
+    fromRecord [idStr, nameStr, emailStr, kindStr, notesStr, pkeyStr] (UserDetailsTable tbl) = do
         UserId uid <- parseText "user id" idStr
         akind      <- parseKind kindStr
+        apkey      <- parsePKey pkeyStr
         let udetails = AccountDetails {
                         accountName         = T.pack nameStr,
                         accountContactEmail = T.pack emailStr,
                         accountKind         = akind,
-                        accountAdminNotes   = T.pack notesStr
+                        accountAdminNotes   = T.pack notesStr,
+                        accountPublicKey    = apkey
                       }
         return $! UserDetailsTable (IntMap.insert uid udetails tbl)
 
@@ -201,6 +208,13 @@ importUserDetails = concatM . map fromRecord . drop 2
     parseKind "real"    = return (Just AccountKindRealUser)
     parseKind "special" = return (Just AccountKindSpecial)
     parseKind sts       = fail $ "unable to parse account kind: " ++ sts
+
+    parsePKey "" = return Nothing
+    parsePKey s  = let bs = BS.pack s in
+      case OpenPGPASCII.decode bs :: Either String [Armor] of
+        Right [(Armor ArmorPublicKeyBlock _ _)]
+          -> return $ Just bs
+        _ -> fail $ "unable to parse account public key: " ++ s
 
 userDetailsToCSV :: BackupType -> UserDetailsTable -> CSV
 userDetailsToCSV backuptype (UserDetailsTable tbl)
@@ -215,6 +229,7 @@ userDetailsToCSV backuptype (UserDetailsTable tbl)
         else "hidden-email@nowhere.org"
       , infoToAccountKind udetails
       , T.unpack (accountAdminNotes udetails)
+      , infoToAccountPublicKey udetails
       ]
 
  where
@@ -224,6 +239,7 @@ userDetailsToCSV backuptype (UserDetailsTable tbl)
        , "email"
        , "kind"
        , "notes"
+       , "public key"
        ]
     userCSVVer = Version [0,2] []
 
@@ -233,6 +249,11 @@ userDetailsToCSV backuptype (UserDetailsTable tbl)
       Nothing                  -> ""
       Just AccountKindRealUser -> "real"
       Just AccountKindSpecial  -> "special"
+
+    infoToAccountPublicKey :: AccountDetails -> String
+    infoToAccountPublicKey udetails = case accountPublicKey udetails of
+      Nothing -> ""
+      Just bs -> BS.unpack bs
 
 ----------------------------------------
 -- Feature definition & initialisation

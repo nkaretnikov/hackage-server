@@ -24,6 +24,8 @@ $hackagePageHeader()$
         <td><input type="password" name="password" id="password">
     <tr><td><label for="repeat-password">Confirm Password</label>
         <td><input type="password" name="repeat-password" id="repeat-password">
+    <tr><td><label for="public-key">Public key (optional)</label>
+        <td><input type="file" name="public-key" id="public-key">
   </table>
 
   <p><input type="submit" value="Create account"/>
