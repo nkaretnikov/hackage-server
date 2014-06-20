@@ -43,9 +43,7 @@ import System.IO
 import Network.Mail.Mime
 import Network.URI (URI(..), URIAuth(..))
 
-import qualified Codec.Encryption.OpenPGP.ASCIIArmor as OpenPGPASCII
-import Codec.Encryption.OpenPGP.ASCIIArmor.Types
-  (Armor(Armor), ArmorType(ArmorPublicKeyBlock))
+import Distribution.Server.Util.OpenPGP (errUnlessValidPublicKeyFormat)
 
 -- | A feature to allow open account signup, and password reset,
 -- both with email confirmation.
@@ -528,7 +526,7 @@ userSignupFeature ServerEnv{serverBaseURI} UserFeature{..} UserDetailsFeature{..
                   then return Nothing
                   -- XXX: Is there a need to catch exceptions here?
                   else Just `fmap` (liftIO $ BS.readFile tmpFile)
-        unless (isValidPublicKeyFormat mbPKey) errInvalidPublicKeyFormat
+        errUnlessValidPublicKeyFormat mbPKey
         updateDeleteSignupResetInfo nonce
         timenow <- liftIO getCurrentTime
         let username    = UserName (T.unpack signupUserName)
@@ -555,16 +553,6 @@ userSignupFeature ServerEnv{serverBaseURI} UserFeature{..} UserDetailsFeature{..
             [MText $ "The two copies of the password did not match. "
                   ++ "Check and try again."]
         lookPublicKey = lookFile "public-key"
-        -- No key was provided, do not show the error.
-        isValidPublicKeyFormat Nothing   = True
-        isValidPublicKeyFormat (Just bs) =
-          case OpenPGPASCII.decode bs :: Either String [Armor] of
-            Right [(Armor ArmorPublicKeyBlock _ _)]
-              -> True
-            _ -> False
-        errInvalidPublicKeyFormat =
-          errBadRequest "Invalid public key format"
-            [MText "The public key must be in the ASCII-armored format."]
         errNameClash Users.ErrUserNameClash =
           errBadRequest "Account login name already taken"
             [MText $ "Sorry! In the time between requesting the account and "

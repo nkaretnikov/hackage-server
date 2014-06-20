@@ -41,6 +41,7 @@ import qualified Data.ByteString.Char8 as BS
 import qualified Codec.Encryption.OpenPGP.ASCIIArmor as OpenPGPASCII
 import Codec.Encryption.OpenPGP.ASCIIArmor.Types
   (Armor(Armor), ArmorType(ArmorPublicKeyBlock))
+import Distribution.Server.Util.OpenPGP (errUnlessValidPublicKeyFormat)
 
 -- | A feature to store extra information about users like email addresses.
 --
@@ -122,13 +123,20 @@ deleteUserDetails (UserId uid) = do
               return True
       else return False
 
-setUserNameContact :: UserId -> Text -> Text -> Update UserDetailsTable ()
-setUserNameContact (UserId uid) name email = do
+setUserNameContact :: UserId -> Text -> Text -> Maybe BS.ByteString
+                   -> Update UserDetailsTable ()
+setUserNameContact (UserId uid) name email mbPKey = do
     UserDetailsTable tbl <- get
     put $! UserDetailsTable (IntMap.alter upd uid tbl)
   where
-    upd Nothing         = Just emptyAccountDetails { accountName = name, accountContactEmail = email }
-    upd (Just udetails) = Just udetails            { accountName = name, accountContactEmail = email }
+    upd Nothing         = Just emptyAccountDetails { accountName = name
+                                                   , accountContactEmail = email
+                                                   , accountPublicKey = mbPKey
+                                                   }
+    upd (Just udetails) = Just udetails { accountName = name
+                                        , accountContactEmail = email
+                                        , accountPublicKey = mbPKey
+                                        }
 
 setUserAdminInfo :: UserId -> Maybe AccountKind -> Text -> Update UserDetailsTable ()
 setUserAdminInfo (UserId uid) akind notes = do
@@ -336,26 +344,30 @@ userDetailsFeature userDetailsState UserFeature{..} CoreFeature{..}
         udetails <- queryUserDetails uid
         return $ toResponse (Aeson.toJSON (render udetails))
       where
-        render Nothing = NameAndContact T.empty T.empty
-        render (Just (AccountDetails { accountName, accountContactEmail })) =
+        render Nothing = NameAndContact T.empty T.empty Nothing
+        render (Just (AccountDetails { accountName
+                                     , accountContactEmail
+                                     , accountPublicKey })) =
             NameAndContact {
               ui_name                = accountName,
-              ui_contactEmailAddress = accountContactEmail
+              ui_contactEmailAddress = accountContactEmail,
+              ui_publicKey           = accountPublicKey
             }
 
     handlerPutUserNameContact :: DynamicPath -> ServerPartE Response
     handlerPutUserNameContact dpath = do
         uid <- lookupUserName =<< userNameInPath dpath
         guardAuthorised_ [IsUserId uid, InGroup adminGroup]
-        NameAndContact name email <- expectAesonContent
-        updateState userDetailsState (SetUserNameContact uid name email)
+        NameAndContact name email mbPKey <- expectAesonContent
+        errUnlessValidPublicKeyFormat mbPKey
+        updateState userDetailsState (SetUserNameContact uid name email mbPKey)
         noContent $ toResponse ()
 
     handlerDeleteUserNameContact :: DynamicPath -> ServerPartE Response
     handlerDeleteUserNameContact dpath = do
         uid <- lookupUserName =<< userNameInPath dpath
         guardAuthorised_ [IsUserId uid, InGroup adminGroup]
-        updateState userDetailsState (SetUserNameContact uid T.empty T.empty)
+        updateState userDetailsState (SetUserNameContact uid T.empty T.empty Nothing)
         noContent $ toResponse ()
 
     handlerGetAdminInfo :: DynamicPath -> ServerPartE Response
@@ -388,7 +400,10 @@ userDetailsFeature userDetailsState UserFeature{..} CoreFeature{..}
         noContent $ toResponse ()
 
 
-data NameAndContact = NameAndContact { ui_name  :: Text, ui_contactEmailAddress :: Text }
+data NameAndContact = NameAndContact { ui_name                :: Text
+                                     , ui_contactEmailAddress :: Text
+                                     , ui_publicKey           :: Maybe BS.ByteString
+                                     }
 data AdminInfo      = AdminInfo      { ui_accountKind :: Maybe AccountKind, ui_notes :: Text }
 
 
