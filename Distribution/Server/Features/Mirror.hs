@@ -94,7 +94,7 @@ mirrorFeature :: ServerEnv
 mirrorFeature ServerEnv{serverBlobStore = store}
               CoreFeature{ coreResource = coreResource@CoreResource{
                              packageInPath
-                           , packageTarballInPath
+                           , packageStringInPath
                            , lookupPackageId
                            }
                          , updateAddPackageRevision
@@ -167,7 +167,7 @@ mirrorFeature ServerEnv{serverBlobStore = store}
     tarballPut :: DynamicPath -> ServerPartE Response
     tarballPut dpath = do
         uid         <- guardAuthorised [InGroup mirrorGroup]
-        pkgid       <- packageTarballInPath dpath
+        pkgid       <- packageStringInPath "tarball" dpath
         fileContent <- expectCompressedTarball
         time        <- liftIO getCurrentTime
         let uploadinfo = (time, uid)

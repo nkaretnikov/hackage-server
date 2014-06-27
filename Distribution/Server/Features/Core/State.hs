@@ -16,8 +16,6 @@ import Control.Monad.Reader
 import qualified Control.Monad.State as State
 import Data.Monoid
 import Data.Time (UTCTime)
-import Data.List (sortBy)
-import Data.Ord (comparing)
 import Data.Maybe (maybeToList)
 
 
@@ -37,9 +35,10 @@ initialPackagesState = PackagesState {
     packageList = mempty
   }
 
-addPackage :: PackageId -> CabalFileText -> UploadInfo -> Maybe PkgTarball
+addPackage :: PackageId -> CabalFileText -> UploadInfo
+           -> Maybe PkgTarball -> Maybe Signature
            -> Update PackagesState (Maybe PkgInfo)
-addPackage pkgid cabalfile uploadinfo mtarball = do 
+addPackage pkgid cabalfile uploadinfo mtarball msignature = do
     PackagesState pkgindex <- State.get
     case PackageIndex.lookupPackageId pkgindex pkgid of
       Just _  -> return Nothing
@@ -49,6 +48,8 @@ addPackage pkgid cabalfile uploadinfo mtarball = do
               pkgData       = cabalfile,
               pkgTarball    = [ (tarball, uploadinfo)
                               | tarball <- maybeToList mtarball ],
+              pkgSignature  = [ (signature, uploadinfo)
+                              | signature <- maybeToList msignature ],
               pkgDataOld    = [],
               pkgUploadData = uploadinfo
             }
@@ -86,6 +87,7 @@ addPackageRevision pkgid cabalfile uploadinfo = do
               pkgInfoId     = pkgid,
               pkgData       = cabalfile,
               pkgTarball    = [],
+              pkgSignature  = [],
               pkgDataOld    = [],
               pkgUploadData = uploadinfo
             }
@@ -144,22 +146,23 @@ mergePkg :: PkgInfo -> Update PackagesState ()
 mergePkg pkg = State.modify $ \pkgsState -> pkgsState { packageList = PackageIndex.insertWith mergeFunc pkg (packageList pkgsState) }
   where
     mergeFunc newPkg oldPkg =
-      let cabalH : cabalT = sortDesc $ (pkgData newPkg, pkgUploadData newPkg)
-                                     : (pkgData oldPkg, pkgUploadData oldPkg)
-                                     : pkgDataOld newPkg
-                                    ++ pkgDataOld oldPkg
-          tarballs        = sortDesc $ pkgTarball newPkg
-                                    ++ pkgTarball oldPkg
+      let cabalH : cabalT
+            = descendUploadTimes $ (pkgData newPkg, pkgUploadData newPkg)
+                                 : (pkgData oldPkg, pkgUploadData oldPkg)
+                                 : pkgDataOld newPkg
+                                ++ pkgDataOld oldPkg
+          signatures = descendUploadTimes $ pkgSignature newPkg
+                                         ++ pkgSignature oldPkg
+          tarballs   = descendUploadTimes $ pkgTarball newPkg
+                                         ++ pkgTarball oldPkg
       in PkgInfo {
              pkgInfoId     = pkgInfoId oldPkg -- should equal pkgInfoId newPkg
            , pkgData       = fst cabalH
            , pkgTarball    = tarballs
+           , pkgSignature  = signatures
            , pkgDataOld    = cabalT
            , pkgUploadData = snd cabalH
            }
-
-    sortDesc :: Ord a => [(a1, (a, b))] -> [(a1, (a, b))]
-    sortDesc = sortBy $ flip (comparing (fst . snd))
 
 deletePackageVersion :: PackageId -> Update PackagesState ()
 deletePackageVersion pkg = State.modify $ \pkgsState -> pkgsState { packageList = deleteVersion (packageList pkgsState) }

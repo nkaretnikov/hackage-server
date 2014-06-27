@@ -77,6 +77,12 @@ instance ToMessage PackageTarball where
     ]
     where md5sum = blobMd5 blobid
 
+newtype PackageSignature = PackageSignature BS.Lazy.ByteString
+
+instance ToMessage PackageSignature where
+  toContentType _ = "text/plain; charset=utf-8"
+  toMessage (PackageSignature bs) = bs
+
 data DocTarball = DocTarball BS.Lazy.ByteString BlobId
 
 instance ToMessage DocTarball where

@@ -47,6 +47,7 @@ data PackageRender = PackageRender {
     rendRepoHeads    :: [(RepoType, String, SourceRepo)],
     rendModules      :: Maybe ModuleForest,
     rendHasTarball   :: Bool,
+    rendHasSignature :: Bool,
     rendHasChangeLog :: Bool,
     rendUploadInfo   :: (UTCTime, Maybe UserInfo),
     rendPkgUri       :: String,
@@ -75,6 +76,7 @@ doPackageRender users info hasChangeLog = return $ PackageRender
     , rendRepoHeads    = catMaybes (map rendRepo $ sourceRepos desc)
     , rendModules      = fmap (moduleForest . exposedModules) (library flatDesc)
     , rendHasTarball   = not . null $ pkgTarball info
+    , rendHasSignature = not . null $ pkgSignature info
     , rendHasChangeLog = hasChangeLog
     , rendUploadInfo   = let (utime, uid) = pkgUploadData info
                          in (utime, Users.lookupUserId uid users)

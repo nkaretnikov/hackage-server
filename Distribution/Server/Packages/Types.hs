@@ -31,6 +31,7 @@ import Control.Applicative
 import qualified Data.Serialize as Serialize
 import Data.Serialize (Serialize)
 import Data.ByteString.Lazy (ByteString)
+import qualified Data.ByteString.Char8 as C
 import Data.Time.Clock (UTCTime(..))
 import Data.Time.Calendar (Day(..))
 import Data.Typeable (Typeable)
@@ -66,6 +67,8 @@ data PkgInfo = PkgInfo {
     --
     -- The canonical tarball URL points to the most recently uploaded package.
     pkgTarball :: ![(PkgTarball, UploadInfo)],
+    -- | Optional ASCII-armored detached OpenPGP signature.
+    pkgSignature :: ![(Signature, UploadInfo)],
     -- | Previous data. The UploadInfo does *not* indicate when the ByteString was
     -- uploaded, but rather when it was replaced. This way, pkgUploadData won't change
     -- even if a cabal file is changed.
@@ -89,6 +92,9 @@ data PkgTarball = PkgTarball {
    pkgTarballNoGz :: !BlobId
 } deriving (Eq, Typeable, Show)
 
+-- | ASCII-armored detached OpenPGP signature.
+type Signature = C.ByteString
+
 type UploadInfo = (UTCTime, UserId)
 
 pkgUploadTime :: PkgInfo -> UTCTime
@@ -107,7 +113,7 @@ deriveSafeCopy 2 'extension ''PkgInfo
 deriveSafeCopy 2 'extension ''PkgTarball
 
 instance MemSize PkgInfo where
-    memSize (PkgInfo a b c d e) = memSize5 a b c d e
+    memSize (PkgInfo a b c d e f) = memSize6 a b c d e f
 
 instance MemSize PkgTarball where
     memSize (PkgTarball a b) = memSize2 a b
@@ -141,6 +147,7 @@ instance Migrate PkgInfo where
     migrate (PkgInfo_v0 a b c d e) =
       PkgInfo (migrate a) b
               [ (migrate pt, migrateUploadInfo ui) | (pt, ui) <- c ]
+              []
               [ (cf, (migrateUploadInfo ui)) | (cf, ui) <- d ]
               (migrateUploadInfo e)
       where

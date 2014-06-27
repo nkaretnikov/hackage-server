@@ -673,7 +673,15 @@ mkHtmlUploads HtmlUtilities{..} UploadFeature{..} = HtmlUploads{..}
           [ h2 << "Upload package"
           , paragraph << [toHtml "See also the ", anchor ! [href "/upload"] << "upload help page", toHtml "."]
           , form ! [theclass "box", XHtml.method "post", action "/packages/", enctype "multipart/form-data"] <<
-                [ input ! [thetype "file", name "package"]
+                [ table << toHtmlFromList
+                  [ tr << toHtmlFromList [ td $ label ! [thefor "package"] << "Tarball"
+                                         , td $ input ! [thetype "file", name "package"]
+                                         ]
+                  , tr << toHtmlFromList [ td $ label ! [thefor "signature"] <<
+                                             "Signature (optional)"
+                                         , td $ input ! [thetype "file", name "signature"]
+                                         ]
+                  ]
                 , input ! [thetype "submit", value "Upload package"]
                 ]
           ]
@@ -720,7 +728,7 @@ mkHtmlCandidates HtmlUtilities{..}
     docs           = documentationResource
 
     pkgCandUploadForm = (resourceAt "/package/:package/candidate/upload") {
-                            resourceGet = [("html", servePackageCandidateUpload)]
+                            resourceGet = [("html", serveCandidateUploadForm)]
                           }
     candMaintainForm  = (resourceAt "/package/:package/candidate/maintain") {
                             resourceGet = [("html", serveCandidateMaintain)]
@@ -786,18 +794,17 @@ mkHtmlCandidates HtmlUtilities{..}
           [ h2 << "Checking and uploading candidates"
           , paragraph << [toHtml "See also the ", anchor ! [href "/upload"] << "upload help page", toHtml "."]
           , form ! [theclass "box", XHtml.method "post", action "/packages/candidates/", enctype "multipart/form-data"] <<
-                [ input ! [thetype "file", name "package"]
-                , input ! [thetype "submit", value "Upload candidate"]
+              [ table << toHtmlFromList
+                [ tr << toHtmlFromList [ td $ label ! [thefor "package"] << "Tarball"
+                                       , td $ input ! [thetype "file", name "package"]
+                                       ]
+                , tr << toHtmlFromList [ td $ label ! [thefor "signature"] <<
+                                             "Signature (optional)"
+                                       , td $ input ! [thetype "file", name "signature"]
+                                       ]
                 ]
-          ]
-
-    servePackageCandidateUpload :: DynamicPath -> ServerPartE Response
-    servePackageCandidateUpload _ = do
-        return $ toResponse $ Resource.XHtml $ hackagePage "Checking and uploading candidates"
-          [ form ! [theclass "box", XHtml.method "post", action "/packages/candidates/", enctype "multipart/form-data"] <<
-                [ input ! [thetype "file", name "package"]
-                , input ! [thetype "submit", value "Upload candidate"]
-                ]
+              , input ! [thetype "submit", value "Upload candidate"]
+              ]
           ]
 
     serveCandidateMaintain :: DynamicPath -> ServerPartE Response

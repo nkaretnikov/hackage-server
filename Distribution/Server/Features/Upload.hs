@@ -35,6 +35,10 @@ import Distribution.PackageDescription (GenericPackageDescription)
 import Distribution.Text (display)
 import qualified Distribution.Server.Util.GZip as GZip
 
+import qualified Data.ByteString.Char8 as C
+import Distribution.Server.Features.UserDetails
+  (queryUserDetails, accountPublicKey, UserDetailsFeature(..))
+import Distribution.Server.Util.OpenPGP (errUnlessValidSignature)
 
 data UploadFeature = UploadFeature {
     -- | The package upload `HackageFeature`.
@@ -65,7 +69,7 @@ data UploadFeature = UploadFeature {
     -- passed-in function, either commits the uploaded tarball to the blob
     -- storage or throws it away and yields an error.
     extractPackage     :: (Users.UserId -> UploadResult -> IO (Maybe ErrorResponse))
-                       -> ServerPartE (Users.UserId, UploadResult, PkgTarball)
+                       -> ServerPartE (Users.UserId, UploadResult, PkgTarball, Maybe Signature)
 }
 
 instance IsHackageFeature UploadFeature where
@@ -104,9 +108,11 @@ data UploadResult = UploadResult {
     uploadWarnings :: ![String]
 }
 
-initUploadFeature :: ServerEnv -> CoreFeature -> UserFeature -> IO UploadFeature
+initUploadFeature :: ServerEnv -> CoreFeature -> UserFeature
+                  -> UserDetailsFeature -> IO UploadFeature
 initUploadFeature env@ServerEnv{serverStateDir}
-                  core@CoreFeature{..} user@UserFeature{..} = do
+                  core@CoreFeature{..} user@UserFeature{..}
+                  userDetails@UserDetailsFeature{..} = do
 
     -- Canonical state
     trusteesState    <- trusteesStateComponent    serverStateDir
@@ -118,7 +124,7 @@ initUploadFeature env@ServerEnv{serverStateDir}
     -- the feature
     rec let (feature,
              getTrusteesGroup, getUploadersGroup, makeMaintainersGroup)
-              = uploadFeature env core user
+              = uploadFeature env core user userDetails
                               trusteesState    trusteesGroup    trusteesGroupResource
                               uploadersState   uploadersGroup   uploadersGroupResource
                               maintainersState maintainersGroup maintainersGroupResource
@@ -181,6 +187,7 @@ maintainersStateComponent stateDir = do
 uploadFeature :: ServerEnv
               -> CoreFeature
               -> UserFeature
+              -> UserDetailsFeature
               -> StateComponent AcidState HackageTrustees    -> UserGroup -> GroupResource
               -> StateComponent AcidState HackageUploaders   -> UserGroup -> GroupResource
               -> StateComponent AcidState PackageMaintainers -> (PackageName -> UserGroup) -> GroupResource
@@ -195,6 +202,7 @@ uploadFeature ServerEnv{serverBlobStore = store}
                          , updateAddPackage
                          }
               UserFeature{..}
+              UserDetailsFeature{..}
               trusteesState    trusteesGroup    trusteesGroupResource
               uploadersState   uploadersGroup   uploadersGroupResource
               maintainersState maintainersGroup maintainersGroupResource
@@ -294,14 +302,15 @@ uploadFeature ServerEnv{serverBlobStore = store}
     uploadPackage = do
         guardAuthorised_ [InGroup uploadersGroup]
         pkgIndex <- queryGetPackageIndex
-        (uid, uresult, tarball) <- extractPackage $ \uid info ->
-                                     processUpload pkgIndex uid info
+        (uid, uresult, tarball, mbSignature) <- extractPackage $ \uid info ->
+                                                  processUpload pkgIndex uid info
         now <- liftIO getCurrentTime
         let (UploadResult pkg pkgStr _) = uresult
             pkgid      = packageId pkg
             cabalfile  = CabalFileText pkgStr
             uploadinfo = (now, uid)
-        success <- updateAddPackage pkgid cabalfile uploadinfo (Just tarball)
+        success <- updateAddPackage pkgid cabalfile uploadinfo
+                                    (Just tarball) mbSignature
         if success
           then do
              -- make package maintainers group for new package
@@ -342,7 +351,7 @@ uploadFeature ServerEnv{serverBlobStore = store}
     -- This function generically extracts a package, useful for uploading, checking,
     -- and anything else in the standard user-upload pipeline.
     extractPackage :: (Users.UserId -> UploadResult -> IO (Maybe ErrorResponse))
-                   -> ServerPartE (Users.UserId, UploadResult, PkgTarball)
+                   -> ServerPartE (Users.UserId, UploadResult, PkgTarball, Maybe Signature)
     extractPackage processFunc =
         withDataFn (lookInput "package") $ \input ->
             case inputValue input of -- HS6 this has been updated to use the new file upload support in HS6, but has not been tested at all
@@ -355,9 +364,9 @@ uploadFeature ServerEnv{serverBlobStore = store}
          do -- initial check to ensure logged in.
             --FIXME: this should have been covered earlier
             uid <- guardAuthenticated
-            now <- liftIO getCurrentTime
             let processPackage :: ByteString -> IO (Either ErrorResponse (UploadResult, BlobStorage.BlobId))
                 processPackage content' = do
+                    now <- liftIO getCurrentTime
                     -- as much as it would be nice to do requirePackageAuth in here,
                     -- processPackage is run in a handle bracket
                     case Upload.unpackPackage now name content' of
@@ -371,11 +380,31 @@ uploadFeature ServerEnv{serverBlobStore = store}
                                    blobIdDecompressed <- BlobStorage.add store decompressedContent
                                    return . Right $ (uresult, blobIdDecompressed)
                             Just err -> return . Left $ err
+            mbAccDetails <- queryUserDetails uid
+            mbPKey <- return . join $ fmap accountPublicKey mbAccDetails
+            -- XXX: The same file is later reopened by
+            -- 'BlobStorage.consumeFileWith'.
+            tarballBS <- liftIO $ C.readFile file
+            (sigFile, sigFileName, _) <- lookFile "signature"
+            mbSignature <-
+              if null sigFileName  -- no signature was provided
+              then return Nothing  -- signatures are optional
+              else do
+                -- XXX: May fail with the "stack overflow" error.
+                sig <- liftIO $ C.readFile sigFile
+                now <- liftIO getCurrentTime
+                let errUnlessValidSignature' Nothing _ _ _
+                      = errBadRequest "Signature verification failed"
+                          [MText "Cannot find the public key. Have you uploaded it?"]
+                    errUnlessValidSignature' (Just pkey) sign mbCurrTime signedData
+                      = errUnlessValidSignature pkey sign mbCurrTime signedData
+                errUnlessValidSignature' mbPKey sig (Just now) tarballBS
+                return $ Just sig
             mres <- liftIO $ BlobStorage.consumeFileWith store file processPackage
             case mres of
                 Left  err -> throwError err
                 Right ((res, blobIdDecompressed), blobId) ->
-                    return (uid, res, tarball)
+                    return (uid, res, tarball, mbSignature)
                   where
                     tarball = PkgTarball { pkgTarballGz   = blobId,
                                            pkgTarballNoGz = blobIdDecompressed }

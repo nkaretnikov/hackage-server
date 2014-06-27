@@ -107,27 +107,35 @@ paragraphs = map unlines . paras . lines
 downloadSection :: PackageRender -> [Html]
 downloadSection PackageRender{..} =
     [ h2 << "Downloads"
-    , ulist << map (li <<) downloadItems
+    , ulist << downloadItems
     ]
   where
     downloadItems =
-      [ if rendHasTarball
-          then [ anchor ! [href downloadURL] << tarGzFileName
-               , toHtml << " ["
-               , anchor ! [href srcURL] << "browse"
-               , toHtml << "]"
-               , toHtml << " (Cabal source package)"
-               ]
-          else [ toHtml << "Package tarball not uploaded" ]
-      , [ anchor ! [href cabalURL] << "Package description"
-        , toHtml $ if rendHasTarball then " (included in the package)" else ""
-        ]
+      [ li << if rendHasTarball
+              then [ anchor ! [href downloadURL] << tarGzFileName
+                   , toHtml << " ["
+                   , anchor ! [href srcURL] << "browse"
+                   , toHtml << "]"
+                   , toHtml << " (Cabal source package)"
+                   ]
+              else [ toHtml << "Package tarball not uploaded" ]
+      , if rendHasSignature
+        then li << [ anchor ! [href signatureURL] << sigFileName
+                   , toHtml << " (OpenPGP signature)"
+                   ]
+        else toHtml ""
+      , li << [ anchor ! [href cabalURL] << "Package description"
+              , toHtml $ if rendHasTarball then " (included in the package)" else ""
+              ]
       ]
 
-    downloadURL   = rendPkgUri </> display rendPkgId <.> "tar.gz"
+    urlPrefix     = rendPkgUri </> display rendPkgId
+    downloadURL   = urlPrefix <.> "tar.gz"
+    signatureURL  = urlPrefix <.> "sig"
     cabalURL      = rendPkgUri </> display (packageName rendPkgId) <.> "cabal"
     srcURL        = rendPkgUri </> "src/"
     tarGzFileName = display rendPkgId ++ ".tar.gz"
+    sigFileName   = display rendPkgId ++ ".sig"
 
 maintainerSection :: PackageId -> Bool -> [Html]
 maintainerSection pkgid isCandidate =

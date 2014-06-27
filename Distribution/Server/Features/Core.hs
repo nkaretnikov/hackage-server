@@ -74,7 +74,7 @@ data CoreFeature = CoreFeature {
     -- when done and returns True.
     updateAddPackage         :: MonadIO m => PackageId ->
                                 CabalFileText -> UploadInfo ->
-                                Maybe PkgTarball -> m Bool,
+                                Maybe PkgTarball -> Maybe Signature -> m Bool,
     -- | Deletes a version of an existing package, deleting the package if it
     -- was the last version.
     --
@@ -188,6 +188,8 @@ data CoreResource = CoreResource {
     coreCabalFile       :: Resource,
     -- | A tarball for a package version.
     corePackageTarball  :: Resource,
+    -- | A signature for a package tarball.
+    corePackageSignature  :: Resource,
 
     -- Rendering resources.
     -- | URI for `corePackagesPage`, given a format (blank for none).
@@ -200,15 +202,18 @@ data CoreResource = CoreResource {
     coreCabalUri       :: PackageId -> String,
     -- | URI for `corePackageTarball`, given a PackageId.
     coreTarballUri     :: PackageId -> String,
+    -- | URI for `corePackageSignature`, given a PackageId.
+    coreSignatureUri   :: PackageId -> String,
 
     -- | Find a PackageId or PackageName inside a path.
     packageInPath :: (MonadPlus m, FromReqURI a) => DynamicPath -> m a,
 
-    -- | Find a tarball's PackageId from inside a path, doing some checking
-    -- for consistency between the package and tarball.
+    -- | Find a tarball's (or a signature's) PackageId from inside a
+    -- path, doing some checking for consistency between the package
+    -- and tarball (or the signature).
     --
     -- TODO: This is a rather ad-hoc function. Do we really need it?
-    packageTarballInPath :: MonadPlus m => DynamicPath -> m PackageId,
+    packageStringInPath :: MonadPlus m => String -> DynamicPath -> m PackageId,
 
     -- | Check that a particular version of a package exists (guard fails if
     -- version is empty)
@@ -304,6 +309,7 @@ coreFeature ServerEnv{serverBlobStore = store} UserFeature{..}
           , corePackagePage
           , corePackageRedirect
           , corePackageTarball
+          , corePackageSignature
           , coreCabalFile
           ]
       , featureState    = [abstractAcidStateComponent packagesState]
@@ -339,6 +345,10 @@ coreFeature ServerEnv{serverBlobStore = store} UserFeature{..}
         resourceDesc = [(GET, "Get package tarball")]
       , resourceGet  = [("tarball", servePackageTarball)]
       }
+    corePackageSignature = (resourceAt "/package/:package/:signature.sig") {
+        resourceDesc = [(GET, "Get package signature")]
+      , resourceGet  = [("signature", servePackageSignature)]
+      }
     coreCabalFile = (resourceAt "/package/:package/:cabal.cabal") {
         resourceDesc = [(GET, "Get package .cabal file")]
       , resourceGet  = [("cabal", serveCabalFile)]
@@ -353,12 +363,14 @@ coreFeature ServerEnv{serverBlobStore = store} UserFeature{..}
       renderResource coreCabalFile [display pkgid, display (packageName pkgid)]
     coreTarballUri  = \pkgid ->
       renderResource corePackageTarball [display pkgid, display pkgid]
+    coreSignatureUri = \pkgid ->
+      renderResource corePackageSignature [display pkgid, display pkgid]
 
     packageInPath dpath = maybe mzero return (lookup "package" dpath >>= fromReqURI)
 
-    packageTarballInPath dpath = do
+    packageStringInPath str dpath = do
       PackageIdentifier name version <- packageInPath dpath
-      case lookup "tarball" dpath >>= fromReqURI of
+      case lookup str dpath >>= fromReqURI of
         Nothing -> mzero
         Just pkgid@(PackageIdentifier name' version') -> do
           -- rules:
@@ -384,10 +396,11 @@ coreFeature ServerEnv{serverBlobStore = store} UserFeature{..}
     --
     updateAddPackage :: MonadIO m => PackageId
                      -> CabalFileText -> UploadInfo
-                     -> Maybe PkgTarball -> m Bool
-    updateAddPackage pkgid cabalFile uploadinfo mtarball = do
+                     -> Maybe PkgTarball -> Maybe Signature
+                     -> m Bool
+    updateAddPackage pkgid cabalFile uploadinfo mtarball msignature = do
       mpkginfo <- updateState packagesState
-                   (AddPackage pkgid cabalFile uploadinfo mtarball)
+                   (AddPackage pkgid cabalFile uploadinfo mtarball msignature)
       case mpkginfo of
         Nothing -> return False
         Just pkginfo -> do
@@ -501,7 +514,7 @@ coreFeature ServerEnv{serverBlobStore = store} UserFeature{..}
     -- result: tarball or not-found error
     servePackageTarball :: DynamicPath -> ServerPartE Response
     servePackageTarball dpath = do
-      pkgid <- packageTarballInPath dpath
+      pkgid <- packageStringInPath "tarball" dpath
       guard (pkgVersion pkgid /= Version [] [])
       pkg <- lookupPackageId pkgid
       case pkgTarball pkg of
@@ -511,6 +524,16 @@ coreFeature ServerEnv{serverBlobStore = store} UserFeature{..}
               file <- liftIO $ BlobStorage.fetch store blobId
               runHook_ packageDownloadHook pkgid
               return $ toResponse $ Resource.PackageTarball file blobId (pkgUploadTime pkg)
+
+    -- result: signature file or not-found error
+    servePackageSignature :: DynamicPath -> ServerPartE Response
+    servePackageSignature dpath = do
+      pkg <- packageStringInPath "signature" dpath >>= lookupPackageId
+      case pkgSignature pkg of
+        [] -> errNotFound "Signature not found"
+                [MText "No signature exists for this package version."]
+        ((sig, _):_) -> return . toResponse .
+                          Resource.PackageSignature $ BS.fromStrict sig
 
     -- result: cabal file or not-found error
     serveCabalFile :: DynamicPath -> ServerPartE Response

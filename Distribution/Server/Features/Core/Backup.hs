@@ -54,12 +54,15 @@ updatePackages packageMap = RestoreBackup {
 type PartialIndex = Map PackageId PartialPkg
 
 data PartialPkg = PartialPkg {
-    partialCabal :: [(Int, CabalFileText)],
-    partialCabalUpload :: [(Int, UploadInfo)],
-    partialTarball :: [(Int, PkgTarball)],
-    partialTarballUpload :: [(Int, UploadInfo)]
+    partialCabal           :: [(Int, CabalFileText)],
+    partialCabalUpload     :: [(Int, UploadInfo)],
+    partialSignature       :: [(Int, Signature)],
+    partialSignatureUpload :: [(Int, UploadInfo)],
+    partialTarball         :: [(Int, PkgTarball)],
+    partialTarballUpload   :: [(Int, UploadInfo)]
 }
 
+-- XXX: Import signatures.
 doPackageImport :: PartialIndex -> BackupEntry -> Restore PartialIndex
 doPackageImport packages entry = case entry of
   BackupByteString ("package":pkgStr:rest) bs -> do
@@ -124,14 +127,16 @@ importVersionList = mapM fromRecord . drop 2
     fromRecord x = fail $ "Error processing versions list: " ++ show x
 
 emptyPartialPkg :: PartialPkg
-emptyPartialPkg = PartialPkg [] [] [] []
+emptyPartialPkg = PartialPkg [] [] [] [] [] []
 
 partialToFullPkg :: (PackageId, PartialPkg) -> Restore PkgInfo
 partialToFullPkg (pkgId, partial) = do
-    cabalDex   <- liftM2 (makeRecord $ "cabal file for " ++ display pkgId)
-                         partialCabal partialCabalUpload partial
-    tarballDex <- liftM2 (makeRecord $ "tarball for " ++ display pkgId)
-                         partialTarball partialTarballUpload partial
+    cabalDex     <- liftM2 (makeRecord $ "cabal file for " ++ display pkgId)
+                           partialCabal partialCabalUpload partial
+    signatureDex <- liftM2 (makeRecord $ "signature for " ++ display pkgId)
+                           partialSignature partialSignatureUpload partial
+    tarballDex   <- liftM2 (makeRecord $ "tarball for " ++ display pkgId)
+                           partialTarball partialTarballUpload partial
     case descendUploadTimes cabalDex of
       [] -> fail $ "No cabal files found for " ++ display pkgId
       ((cabal, info):cabalOld) -> case parsePackageDescription (cabalFileString cabal) of
@@ -140,7 +145,8 @@ partialToFullPkg (pkgId, partial) = do
             return $ PkgInfo {
                 pkgInfoId = pkgId,
                 pkgData = cabal,
-                pkgTarball = descendUploadTimes tarballDex,
+                pkgTarball   = descendUploadTimes tarballDex,
+                pkgSignature = descendUploadTimes signatureDex,
                 pkgDataOld = cabalOld,
                 pkgUploadData = info
             }
@@ -187,6 +193,7 @@ infoToAllEntries pkg =
     let pkgId = pkgInfoId pkg
         cabals   = cabalListToExport pkgId $ ((pkgData pkg, pkgUploadData pkg):pkgDataOld pkg)
         tarballs = tarballListToExport pkgId (pkgTarball pkg)
+        -- XXX: Export signatures.
     in cabals ++ tarballs
 
 infoToCurrentEntries :: PkgInfo -> [BackupEntry]
@@ -194,6 +201,7 @@ infoToCurrentEntries pkg =
     let pkgId = pkgInfoId pkg
         cabals   = cabalListToExport pkgId [(pkgData pkg, pkgUploadData pkg)]
         tarballs = tarballListToExport pkgId (take 1 $ pkgTarball pkg)
+        -- XXX: Export signatures.
     in cabals ++ tarballs
 
 ----------- Converting pieces of PkgInfo to entries
@@ -226,4 +234,3 @@ versionListToCSV infos = [showVersion versionCSVVer]:versionCSVKey:
   where
     versionCSVVer = Version [0,1] ["unstable"]
     versionCSVKey = ["index", "time", "user-id"]
-

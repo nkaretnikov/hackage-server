@@ -260,7 +260,7 @@ executable hackage-server
     zlib       >= 0.5.3 && < 0.6,
     tar        == 0.4.* && >= 0.4.0.1,
     async      == 2.0.*,
-    cereal     == 0.3.*,
+    cereal     >= 0.4,
     safecopy   >= 0.6 && < 0.9,
     crypto-api >= 0.12 && < 0.13, 
     pureMD5    >= 0.2,
@@ -276,14 +276,21 @@ executable hackage-server
     Cabal      == 1.20.*,
     csv        == 0.1.*,
     stm        >= 2.2 && < 2.5,
-    acid-state == 0.8.*,
+    acid-state >= 0.8 && < 0.13,
     happstack-server == 7.0.* || ==7.1.* && >= 7.0.6,
     hslogger,
     mime-mail  ==0.4.*,
     HStringTemplate ==0.7.*,
     lifted-base >= 0.2.1 && < 0.3,
     QuickCheck >= 2.5,
-    openpgp-asciiarmor == 0.1
+    openpgp-asciiarmor == 0.1,
+    -- Note that a version from the git repository is required because
+    -- there are no superfluous 'MonadResource' constraints in
+    -- 'Data/Conduit/OpenPGP/Keyring.hs' (see
+    -- http://anonscm.debian.org/gitweb/?p=users/clint/hOpenPGP.git;a=commit;h=5719ddfc).
+    hOpenPGP == 1.2.1,
+    ixset == 1.0.*,
+    conduit == 1.1.*
 
   if ! flag(minimal)
     build-depends:
@@ -451,15 +458,19 @@ executable OpenPGPTest
                     bytestring,
                     Cabal,
                     cereal,
+                    conduit,
                     containers,
                     crypto-api,
+                    crypto-pubkey >= 0.1.4,
                     csv,
                     deepseq,
                     directory,
                     filepath,
                     happstack-server,
+                    hOpenPGP,
                     HStringTemplate,
                     HUnit >=1.2 && <1.3,
+                    ixset,
                     mtl,
                     network,
                     old-locale,

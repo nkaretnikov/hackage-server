@@ -37,7 +37,9 @@ import Distribution.Package
 
 import Data.Version
 import Data.Function (fix)
+import qualified Data.ByteString.Lazy as BS
 import Data.List (find)
+import Data.Maybe (maybeToList)
 import Data.Time.Clock (getCurrentTime)
 import Control.Monad.Error (ErrorT(..))
 
@@ -147,7 +149,7 @@ candidatesFeature :: ServerEnv
                   -> PackageCandidatesFeature
 candidatesFeature ServerEnv{serverBlobStore = store}
                   UserFeature{..}
-                  CoreFeature{ coreResource=core@CoreResource{packageInPath, packageTarballInPath}
+                  CoreFeature{ coreResource=core@CoreResource{packageInPath, packageStringInPath}
                              , queryGetPackageIndex
                              , updateAddPackage
                              }
@@ -162,8 +164,9 @@ candidatesFeature ServerEnv{serverBlobStore = store}
           map ($candidatesCoreResource) [
               corePackagesPage
             , corePackagePage
-            , coreCabalFile
             , corePackageTarball
+            , corePackageSignature
+            , coreCabalFile
             ] ++
           map ($candidatesResource) [
               publishPage
@@ -188,6 +191,11 @@ candidatesFeature ServerEnv{serverBlobStore = store}
             resourceDesc = [(GET, "Candidate tarball")]
           , resourceGet  = [("tarball", serveCandidateTarball)]
           }
+      , corePackageSignature = (resourceAt "/package/:package/candidate/:signature.sig") {
+            resourceDesc = [(GET, "Get candidate signature")]
+          , resourceGet  = [("signature", serveCandidateSignature)]
+          }
+
       , indexPackageUri = \format ->
           renderResource (corePackagesPage r) [format]
       , corePackageIdUri = \format pkgid ->
@@ -196,10 +204,12 @@ candidatesFeature ServerEnv{serverBlobStore = store}
           renderResource (corePackagePage r) [display pkgname, format]
       , coreTarballUri = \pkgid ->
           renderResource (corePackageTarball r) [display pkgid, display pkgid]
+      , coreSignatureUri = \pkgid ->
+          renderResource (corePackageSignature r) [display pkgid, display pkgid]
       , coreCabalUri = \pkgid ->
           renderResource (coreCabalFile r) [display pkgid, display (packageName pkgid)]
       , packageInPath
-      , packageTarballInPath
+      , packageStringInPath
       , guardValidPackageId   = void . lookupCandidateId
       , guardValidPackageName = void . lookupCandidateName
       , lookupPackageName     = fmap (map candPkgInfo) . lookupCandidateName
@@ -257,13 +267,22 @@ candidatesFeature ServerEnv{serverBlobStore = store}
 
     serveCandidateTarball :: DynamicPath -> ServerPartE Response
     serveCandidateTarball dpath = do
-      pkg <- packageTarballInPath dpath >>= lookupCandidateId
+      pkg <- packageStringInPath "tarball" dpath >>= lookupCandidateId
       case pkgTarball (candPkgInfo pkg) of
         [] -> mzero --candidate's tarball does not exist
         ((tb, _):_) -> do
             let blobId = pkgTarballGz tb
             file <- liftIO $ BlobStorage.fetch store blobId
             ok $ toResponse $ Resource.PackageTarball file blobId (pkgUploadTime $ candPkgInfo pkg)
+
+    serveCandidateSignature :: DynamicPath -> ServerPartE Response
+    serveCandidateSignature dpath = do
+      pkg <- packageStringInPath "signature" dpath >>= lookupCandidateId
+      case pkgSignature (candPkgInfo pkg) of
+        [] -> errNotFound "Signature not found"
+                [MText "No signature exists for this package version."]
+        ((sig, _):_) -> return . toResponse .
+                          Resource.PackageSignature $ BS.fromStrict sig
 
     --withFormat :: DynamicPath -> (String -> a) -> a
     --TODO: use something else for nice html error pages
@@ -277,8 +296,9 @@ candidatesFeature ServerEnv{serverBlobStore = store}
     uploadCandidate isRight = do
         regularIndex <- queryGetPackageIndex
         -- ensure that the user has proper auth if the package exists
-        (uid, uresult, tarball) <- extractPackage $ \uid info ->
-                                     processCandidate isRight regularIndex uid info
+        (uid, uresult, tarball, mbSignature) <-
+          extractPackage $ \uid info ->
+            processCandidate isRight regularIndex uid info
         now <- liftIO getCurrentTime
         let (UploadResult pkg pkgStr _) = uresult
             pkgid      = packageId pkg
@@ -289,6 +309,8 @@ candidatesFeature ServerEnv{serverBlobStore = store}
                                 pkgInfoId     = pkgid,
                                 pkgData       = cabalfile,
                                 pkgTarball    = [(tarball, uploadinfo)],
+                                pkgSignature  = [ (signature, uploadinfo)
+                                                | signature <- maybeToList mbSignature ],
                                 pkgUploadData = uploadinfo,
                                 pkgDataOld    = []
                               },
@@ -328,9 +350,12 @@ candidatesFeature ServerEnv{serverBlobStore = store}
               uresult = UploadResult (pkgDesc pkgInfo) (cabalFileByteString $ pkgData pkgInfo) (candWarnings candidate)
           time <- liftIO getCurrentTime
           let uploadInfo = (time, uid)
-              ((tarball,_):_) = pkgTarball pkgInfo 
+              ((tarball,tarballUploadInfo):_) = pkgTarball pkgInfo
+              signatures  = pkgSignature pkgInfo
+              mbSignature =
+                fmap fst $ find ((== tarballUploadInfo) . snd) signatures
           success <- updateAddPackage (packageId candidate) (pkgData pkgInfo)
-                                      uploadInfo (Just tarball)
+                                      uploadInfo (Just tarball) mbSignature
           --FIXME: share code here with upload
           -- currently we do not create the initial maintainer group etc.
           if success

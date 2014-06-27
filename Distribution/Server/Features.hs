@@ -85,9 +85,14 @@ initHackageFeatures env@ServerEnv{serverVerbosity = verbosity} = do
                          coreFeature
                          usersFeature
 
+    userDetailsFeature <- initUserDetailsFeature env
+                            usersFeature
+                            coreFeature
+
     uploadFeature   <- initUploadFeature env
                          coreFeature
                          usersFeature
+                         userDetailsFeature
 
 #ifndef MINIMAL
     tarIndexCacheFeature <- initTarIndexCacheFeature env usersFeature
@@ -100,10 +105,6 @@ initHackageFeatures env@ServerEnv{serverVerbosity = verbosity} = do
                          usersFeature
                          coreFeature
                          packageContentsFeature
-
-    userDetailsFeature <- initUserDetailsFeature env
-                            usersFeature
-                            coreFeature
 
     userSignupFeature <- initUserSignupFeature env
                            usersFeature
