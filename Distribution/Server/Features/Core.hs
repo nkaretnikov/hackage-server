@@ -10,6 +10,7 @@ module Distribution.Server.Features.Core (
     isPackageAdd,
     isPackageDelete,
     isPackageIndexChange,
+    PublicKeyChange(..),
 
     -- * Misc other utils
     packageExists,
@@ -114,8 +115,13 @@ data CoreFeature = CoreFeature {
     -- or crypto signatures. This requires a file name, file contents, and
     -- modification time for the tar entry.
     --
-    -- This runs a `PackageChangeIndexExtra` hook when done.
-    updateArchiveIndexEntry  :: MonadIO m => String -> (ByteString, UTCTime) -> m (),
+    -- This runs a `PackageChangeAddIndexExtra` hook when done.
+    addArchiveIndexEntry :: MonadIO m => String -> (ByteString, UTCTime) -> m (),
+
+    -- | Delete an entry from the 00-index.tar file.
+    --
+    -- Runs a `PackageChangeDeleteIndexExtra` hook when done.
+    deleteArchiveIndexEntry :: MonadIO m => String -> m (),
 
     -- | Notification of package or index changes.
     packageChangeHook :: Hook PackageChange (),
@@ -139,7 +145,8 @@ data PackageChange
     | PackageChangeInfo   PkgInfo PkgInfo
     -- | A file has changed in the package index tar not covered by any of the
     -- other change types.
-    | PackageChangeIndexExtra String ByteString UTCTime
+    | PackageChangeAddIndexExtra String ByteString UTCTime
+    | PackageChangeDeleteIndexExtra String
 
 -- | A predicate to use with `packageChangeHook` and `registerHookJust` for
 -- keeping other features synchronized with the main package index.
@@ -150,7 +157,8 @@ isPackageChangeAny :: PackageChange -> Maybe (PackageId, Maybe PkgInfo)
 isPackageChangeAny (PackageChangeAdd        pkginfo) = Just (packageId pkginfo, Just pkginfo)
 isPackageChangeAny (PackageChangeDelete     pkginfo) = Just (packageId pkginfo, Nothing)
 isPackageChangeAny (PackageChangeInfo     _ pkginfo) = Just (packageId pkginfo, Just pkginfo)
-isPackageChangeAny  PackageChangeIndexExtra {}       = Nothing
+isPackageChangeAny  PackageChangeAddIndexExtra {}    = Nothing
+isPackageChangeAny  PackageChangeDeleteIndexExtra {} = Nothing
 
 -- | A predicate to use with `packageChangeHook` and `registerHookJust` for
 -- newly added packages.
@@ -176,7 +184,6 @@ isPackageDeleteVersion             :: Maybe PackageId,
 isPackageChangeCabalFile           :: Maybe (PackageId, CabalFileText),
 isPackageChangeCabalFileUploadInfo :: Maybe (PackageId, UploadInfo),
 isPackageChangeTarball             :: Maybe (PackageId, PkgTarball),
-isPackageIndexExtraChange          :: Maybe (String, ByteString, UTCTime)
 -}
 
 data CoreResource = CoreResource {
@@ -235,7 +242,8 @@ data CoreResource = CoreResource {
 
 initCoreFeature :: ServerEnv -> UserFeature -> IO CoreFeature
 initCoreFeature env@ServerEnv{serverStateDir, serverCacheDelay,
-                              serverVerbosity = verbosity} users = do
+                              serverVerbosity = verbosity}
+                userFeature@UserFeature{..} = do
     loginfo verbosity "Initialising core feature, start"
 
     -- Canonical state
@@ -250,7 +258,7 @@ initCoreFeature env@ServerEnv{serverStateDir, serverCacheDelay,
     packageDownloadHook <- newHook
 
     rec let (feature, getIndexTarball)
-              = coreFeature env users
+              = coreFeature env userFeature
                             packagesState extraMap indexTar
                             packageChangeHook packageDownloadHook
 
@@ -264,8 +272,23 @@ initCoreFeature env@ServerEnv{serverStateDir, serverCacheDelay,
                         asyncCacheLogVerbosity = verbosity
                       }
 
-    registerHookJust packageChangeHook isPackageIndexChange $ \_ ->
+    registerHookJust packageChangeHook isPackageIndexChange . const $
       prodAsyncCache indexTar
+
+    registerHookJust publicKeyChangeHook isPublicKeyChangeAdd $
+      \(uname, pkey, time) -> do
+        let uname' = show uname
+        addArchiveIndexEntry feature
+          ("public-keys/" ++ uname' ++ "-public.txt")
+          (pkey, time)
+        runHook_ packageChangeHook $ PackageChangeAddIndexExtra uname' pkey time
+
+    registerHookJust publicKeyChangeHook isPublicKeyChangeDelete $
+      \uname -> do
+        let uname' = show uname
+        deleteArchiveIndexEntry feature
+          ("public-keys/" ++ uname' ++ "-public.txt")
+        runHook_ packageChangeHook $ PackageChangeDeleteIndexExtra uname'
 
     loginfo verbosity "Initialising core feature, end"
     return feature
@@ -450,10 +473,16 @@ coreFeature ServerEnv{serverBlobStore = store} UserFeature{..}
           runHook_ packageChangeHook  (PackageChangeInfo oldpkginfo newpkginfo)
           return True
 
-    updateArchiveIndexEntry :: MonadIO m => String -> (ByteString, UTCTime) -> m ()
-    updateArchiveIndexEntry entryName entryDetails@(entryData, entryTime) = do
-      modifyMemState indexExtras (Map.insert entryName entryDetails)
-      runHook_ packageChangeHook (PackageChangeIndexExtra entryName entryData entryTime)
+    addArchiveIndexEntry :: MonadIO m => String -> (ByteString, UTCTime) -> m ()
+    addArchiveIndexEntry entryName entryDetails@(entryData, entryTime) = do
+      modifyMemState indexExtras $ Map.insert entryName entryDetails
+      runHook_ packageChangeHook $
+        PackageChangeAddIndexExtra entryName entryData entryTime
+
+    deleteArchiveIndexEntry :: MonadIO m => String -> m ()
+    deleteArchiveIndexEntry entryName = do
+      modifyMemState indexExtras $ Map.delete entryName
+      runHook_ packageChangeHook $ PackageChangeDeleteIndexExtra entryName
 
     -- Cache updates
     --

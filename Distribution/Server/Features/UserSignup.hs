@@ -14,6 +14,7 @@ import Distribution.Server.Framework.Templating
 import Distribution.Server.Framework.BackupDump
 import Distribution.Server.Framework.BackupRestore
 
+import Distribution.Server.Features.Core
 import Distribution.Server.Features.Upload
 import Distribution.Server.Features.Users
 import Distribution.Server.Features.UserDetails
@@ -24,10 +25,12 @@ import qualified Distribution.Server.Users.Users as Users
 
 import Data.Map (Map)
 import qualified Data.Map as Map
+import Data.Maybe (isJust, fromJust)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS -- Only used for ASCII data
+import qualified Data.ByteString.Lazy.Char8 as BSL
 import qualified Data.ByteString.Base16 as Base16
 import Data.Char (isSpace, isPrint)
 
@@ -283,9 +286,10 @@ initUserSignupFeature :: ServerEnv
                       -> UserFeature
                       -> UserDetailsFeature
                       -> UploadFeature
+                      -> CoreFeature
                       -> IO UserSignupFeature
 initUserSignupFeature env@ServerEnv{serverStateDir, serverTemplatesDir, serverTemplatesMode}
-                      users userdetails upload = do
+                      users userdetails upload core = do
 
   -- Canonical state
   signupResetState <- signupResetStateComponent serverStateDir
@@ -299,20 +303,21 @@ initUserSignupFeature env@ServerEnv{serverStateDir, serverTemplatesDir, serverTe
                  , "ResetEmailSent.html", "ResetConfirm.html" ]
 
   let feature = userSignupFeature env users userdetails
-                                  upload signupResetState templates
+                                  upload core signupResetState templates
 
   return feature
-
 
 userSignupFeature :: ServerEnv
                   -> UserFeature
                   -> UserDetailsFeature
                   -> UploadFeature
+                  -> CoreFeature
                   -> StateComponent AcidState SignupResetTable
                   -> Templates
                   -> UserSignupFeature
-userSignupFeature ServerEnv{serverBaseURI} UserFeature{..} UserDetailsFeature{..}
-                  UploadFeature{uploadersGroup} signupResetState templates
+userSignupFeature ServerEnv{serverBaseURI} UserFeature{..}
+                  UserDetailsFeature{..} UploadFeature{uploadersGroup}
+                  CoreFeature{..} signupResetState templates
   = UserSignupFeature {..}
 
   where
@@ -544,6 +549,12 @@ userSignupFeature ServerEnv{serverBaseURI} UserFeature{..} UserDetailsFeature{..
            >>= either errNameClash return
         updateUserDetails uid acctDetails
         liftIO $ addUserList uploadersGroup uid
+        when (isJust mbPKey) $ do
+          let pkey = fromJust mbPKey
+          uinfo <- lookupUserInfo uid
+          now <- liftIO getCurrentTime
+          runHook_ publicKeyChangeHook $
+            PublicKeyChangeAdd (userName uinfo) (BSL.fromStrict pkey) now
         seeOther (userPageUri userResource "" username) (toResponse ())
       where
         lookPasswd = body $ (,) <$> look "password"

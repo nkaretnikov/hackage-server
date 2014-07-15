@@ -7,6 +7,10 @@ module Distribution.Server.Features.Users (
     UserResource(..),
 
     GroupResource(..),
+
+    PublicKeyChange(..),
+    isPublicKeyChangeAdd,
+    isPublicKeyChangeDelete
   ) where
 
 import Distribution.Server.Framework
@@ -35,6 +39,8 @@ import qualified Data.Text as T
 
 import Distribution.Text (display, simpleParse)
 
+import Data.ByteString.Lazy (ByteString)
+import Data.Time.Clock (UTCTime)
 
 -- | A feature to allow manipulation of the database of users.
 --
@@ -135,11 +141,25 @@ data UserFeature = UserFeature {
     -- | For a given user, return all of the URIs for groups they are in.
     getGroupIndex       :: forall m. (Functor m, MonadIO m) => UserId -> m [String],
     -- | For a given URI, get a GroupDescription for it, if one can be found.
-    getIndexDesc        :: forall m. MonadIO m => String -> m GroupDescription
+    getIndexDesc        :: forall m. MonadIO m => String -> m GroupDescription,
+
+    -- | Notification of public key changes.
+    publicKeyChangeHook :: Hook PublicKeyChange ()
 }
 
 instance IsHackageFeature UserFeature where
   getFeatureInterface = userFeatureInterface
+
+data PublicKeyChange = PublicKeyChangeAdd UserName ByteString UTCTime
+                     | PublicKeyChangeDelete UserName
+
+isPublicKeyChangeAdd :: PublicKeyChange -> Maybe (UserName, ByteString, UTCTime)
+isPublicKeyChangeAdd (PublicKeyChangeAdd uname bs time) = Just (uname, bs, time)
+isPublicKeyChangeAdd _                                  = Nothing
+
+isPublicKeyChangeDelete :: PublicKeyChange -> Maybe UserName
+isPublicKeyChangeDelete (PublicKeyChangeDelete uname) = Just uname
+isPublicKeyChangeDelete _                             = Nothing
 
 data UserResource = UserResource {
     -- | The list of all users.
@@ -203,8 +223,9 @@ initUserFeature ServerEnv{serverStateDir} = do
   groupIndex   <- newMemStateWHNF emptyGroupIndex
 
   -- Extension hooks
-  userAdded     <- newHook
-  authFailHook  <- newHook
+  userAdded           <- newHook
+  authFailHook        <- newHook
+  publicKeyChangeHook <- newHook
 
   -- Slightly tricky: we have an almost recursive knot between the group
   -- resource management functions, and creating the admin group
@@ -216,7 +237,7 @@ initUserFeature ServerEnv{serverStateDir} = do
             = userFeature usersState
                           adminsState
                           groupIndex
-                          userAdded authFailHook
+                          userAdded authFailHook publicKeyChangeHook
                           adminG adminR
 
       (adminG, adminR) <- groupResourceAt "/users/admins/" adminGroupDesc
@@ -255,11 +276,12 @@ userFeature :: StateComponent AcidState Users.Users
             -> MemState GroupIndex
             -> Hook () ()
             -> Hook Auth.AuthError (Maybe ErrorResponse)
+            -> Hook PublicKeyChange ()
             -> UserGroup
             -> GroupResource
             -> (UserFeature, UserGroup)
 userFeature  usersState adminsState
-             groupIndex userAdded authFailHook
+             groupIndex userAdded authFailHook publicKeyChangeHook
              adminGroup adminResource
   = (UserFeature {..}, adminGroupDesc)
   where
@@ -437,7 +459,11 @@ userFeature  usersState adminsState
       uid  <- lookupUserName =<< userNameInPath dpath
       merr <- updateState usersState $ DeleteUser uid
       case merr of
-        Nothing -> noContent $ toResponse ()
+        Nothing -> do
+          uinfo <- lookupUserInfo uid
+          runHook_ publicKeyChangeHook .
+            PublicKeyChangeDelete $ userName uinfo
+          noContent $ toResponse ()
         --TODO: need to be able to delete user by name to fix this race condition
         Just Users.ErrNoSuchUserId -> errInternalError [MText "uid does not exist"]
 

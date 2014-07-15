@@ -38,10 +38,13 @@ import Data.Version
 import Text.CSV (CSV, Record)
 
 import qualified Data.ByteString.Char8 as BS
+import qualified Data.ByteString.Lazy.Char8 as BSL
 import qualified Codec.Encryption.OpenPGP.ASCIIArmor as OpenPGPASCII
 import Codec.Encryption.OpenPGP.ASCIIArmor.Types
   (Armor(Armor), ArmorType(ArmorPublicKeyBlock))
 import Distribution.Server.Util.OpenPGP (errUnlessValidPublicKeyFormat)
+import Data.Maybe (isJust, fromJust)
+import Data.Time.Clock (getCurrentTime)
 
 -- | A feature to store extra information about users like email addresses.
 --
@@ -271,17 +274,18 @@ userDetailsToCSV backuptype (UserDetailsTable tbl)
 -- Feature definition & initialisation
 --
 
-initUserDetailsFeature :: ServerEnv -> UserFeature -> CoreFeature -> IO UserDetailsFeature
-initUserDetailsFeature ServerEnv{serverStateDir} users core = do
+initUserDetailsFeature :: ServerEnv -> UserFeature -> CoreFeature
+                       -> IO UserDetailsFeature
+initUserDetailsFeature ServerEnv{serverStateDir} userFeature coreFeature = do
 
   -- Canonical state
   usersDetailsState <- userDetailsStateComponent serverStateDir
 
-  let feature = userDetailsFeature usersDetailsState users core
+  let udFeature = userDetailsFeature usersDetailsState userFeature coreFeature
 
   --TODO: link up to user feature to delete
 
-  return feature
+  return udFeature
 
 
 userDetailsFeature :: StateComponent AcidState UserDetailsTable
@@ -361,6 +365,17 @@ userDetailsFeature userDetailsState UserFeature{..} CoreFeature{..}
         NameAndContact name email mbPKey <- expectAesonContent
         errUnlessValidPublicKeyFormat mbPKey
         updateState userDetailsState (SetUserNameContact uid name email mbPKey)
+        if (isJust mbPKey)
+          then do
+            let pkey = fromJust mbPKey
+            uinfo <- lookupUserInfo uid
+            now <- liftIO getCurrentTime
+            runHook_ publicKeyChangeHook $
+              PublicKeyChangeAdd (userName uinfo) (BSL.fromStrict pkey) now
+          else do
+            uinfo <- lookupUserInfo uid
+            runHook_ publicKeyChangeHook .
+              PublicKeyChangeDelete $ userName uinfo
         noContent $ toResponse ()
 
     handlerDeleteUserNameContact :: DynamicPath -> ServerPartE Response
@@ -368,6 +383,9 @@ userDetailsFeature userDetailsState UserFeature{..} CoreFeature{..}
         uid <- lookupUserName =<< userNameInPath dpath
         guardAuthorised_ [IsUserId uid, InGroup adminGroup]
         updateState userDetailsState (SetUserNameContact uid T.empty T.empty Nothing)
+        uinfo <- lookupUserInfo uid
+        runHook_ publicKeyChangeHook .
+          PublicKeyChangeDelete $ userName uinfo
         noContent $ toResponse ()
 
     handlerGetAdminInfo :: DynamicPath -> ServerPartE Response

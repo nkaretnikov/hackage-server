@@ -24,7 +24,10 @@ newtype UserId = UserId Int
   deriving (Eq, Ord, Show, Typeable, MemSize, ToJSON, FromJSON)
 
 newtype UserName  = UserName String
-  deriving (Eq, Ord, Show, Typeable, MemSize, ToJSON, FromJSON)
+  deriving (Eq, Ord, Typeable, MemSize, ToJSON, FromJSON)
+
+instance Show UserName where
+  show (UserName str) = str
 
 data UserInfo = UserInfo {
                   userName   :: !UserName,

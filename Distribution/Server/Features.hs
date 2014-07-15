@@ -110,6 +110,7 @@ initHackageFeatures env@ServerEnv{serverVerbosity = verbosity} = do
                            usersFeature
                            userDetailsFeature
                            uploadFeature
+                           coreFeature
 
     legacyPasswdsFeature <- initLegacyPasswdsFeature env
                               usersFeature

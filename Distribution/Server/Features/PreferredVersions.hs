@@ -126,7 +126,7 @@ versionsFeature CoreFeature{ coreResource=CoreResource{ packageInPath
                                                       , lookupPackageName
                                                       }
                            , queryGetPackageIndex
-                           , updateArchiveIndexEntry
+                           , addArchiveIndexEntry
                            }
                 UploadFeature{..}
                 TagsFeature{..}
@@ -272,7 +272,7 @@ versionsFeature CoreFeature{ coreResource=CoreResource{ packageInPath
                       newInfo <- queryState preferredState $ GetPreferredInfo pkgname
                       prefVersions <- makePreferredVersions
                       now <- liftIO getCurrentTime
-                      updateArchiveIndexEntry "preferred-versions" (BS.pack prefVersions, now)
+                      addArchiveIndexEntry "preferred-versions" (BS.pack prefVersions, now)
                       runHook_ preferredHook (pkgname, newInfo)
                       return ()
                   False -> preferredError "Not all of the selected versions are in the main index."
