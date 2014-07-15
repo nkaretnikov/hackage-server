@@ -220,12 +220,12 @@ initHackageFeatures env@ServerEnv{serverVerbosity = verbosity} = do
          [ getFeatureInterface usersFeature
          , getFeatureInterface coreFeature
          , getFeatureInterface mirrorFeature
+         , getFeatureInterface userDetailsFeature
          , getFeatureInterface uploadFeature
 #ifndef MINIMAL
          , getFeatureInterface tarIndexCacheFeature
          , getFeatureInterface packageContentsFeature
          , getFeatureInterface packagesFeature
-         , getFeatureInterface userDetailsFeature
          , getFeatureInterface userSignupFeature
          , getFeatureInterface legacyPasswdsFeature
          , getFeatureInterface distroFeature
